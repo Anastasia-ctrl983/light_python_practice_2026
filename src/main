@@ -1,18 +1,60 @@
 """
 Сканирование папок, поиск дубликатов и сравнение с резервной копией.
+Сканирование папки и сбор метаданных с фильтрацией.
 """
 
 import sys
 import os
+import datetime
+
+def scan_folder(folder_path, extension=None):
+    
+    files_info = []
+    
+    try:
+        items = os.listdir(folder_path)
+    except PermissionError:
+        return files_info
+    
+    for item in items:
+        full_path = os.path.join(folder_path, item)
+        
+        if os.path.isdir(full_path):
+            # Рекурсивно обходим папку
+            sub_files = scan_folder(full_path, extension)
+            files_info.extend(sub_files)
+        else:
+            # Фильтрация по расширению
+            if extension:
+                if not full_path.lower().endswith(extension.lower()):
+                    continue
+            
+            try:
+                stat = os.stat(full_path)
+                files_info.append({
+                    'path': full_path,
+                    'size': stat.st_size,
+                    'modified': datetime.datetime.fromtimestamp(stat.st_mtime)
+                })
+            except (OSError, PermissionError):
+                continue
+    
+    return files_info
 
 def main():
-
     if len(sys.argv) < 2:
         print("Ошибка: укажите путь к папке")
-        print("Пример: python main.py C:/МоиДокументы")
+        print("Пример: python main.py C:\МоиДокументы")
+        print("Пример с фильтром: python main.py C:\МоиДокументы .txt")
         sys.exit(1)
     
     folder_path = sys.argv[1]
+    
+    extension = None
+    if len(sys.argv) >= 3:
+        extension = sys.argv[2]
+        if not extension.startswith('.'):
+            extension = '.' + extension
     
     if not os.path.exists(folder_path):
         print(f"Ошибка: папка '{folder_path}' не существует")
@@ -23,7 +65,31 @@ def main():
         sys.exit(1)
     
     print(f"Начинаем сканирование папки: {folder_path}")
-    print("Программа успешно запущена!")
+    if extension:
+        print(f"Фильтр: файлы с расширением {extension}")
+    
+    files = scan_folder(folder_path, extension)
+    
+    print(f"Всего найдено файлов: {len(files)}")
+    print()
+    
+    if len(files) <= 10:
+        print("Список всех файлов:")
+        for i, file_info in enumerate(files, 1):
+            print(f"{i}. {file_info['path']}")
+            print(f"   Размер: {file_info['size']} байт")
+            print(f"   Изменён: {file_info['modified']}")
+            print()
+    else:
+        print(f"Первые 10 файлов из {len(files)}:")
+        for i, file_info in enumerate(files[:10], 1):
+            print(f"{i}. {file_info['path']}")
+            print(f"   Размер: {file_info['size']} байт")
+            print(f"   Изменён: {file_info['modified']}")
+            print()
+        print(f"... и ещё {len(files) - 10} файлов")
+    
+    print("Сканирование завершено!")
 
 if __name__ == "__main__":
     main()
