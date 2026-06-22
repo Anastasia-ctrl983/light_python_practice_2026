@@ -1,11 +1,24 @@
 """
 Сканирование папок, поиск дубликатов и сравнение с резервной копией.
 Сканирование папки и сбор метаданных с фильтрацией.
+Сканирование папок, поиск дубликатов и сравнение с резервной копией.
 """
 
 import sys
 import os
 import datetime
+import hashlib
+
+def calculate_hash(file_path, chunk_size=8192):
+    # Считает хэш файла (MD5). Читает файл порциями по 8 кб, чтобы не загружать память
+    hash_md5 = hashlib.md5()
+    try:
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+    except (OSError, PermissionError):
+        return None
 
 def scan_folder(folder_path, extension=None):
     
@@ -31,15 +44,38 @@ def scan_folder(folder_path, extension=None):
             
             try:
                 stat = os.stat(full_path)
+                
+                # считаем хэш файла
+                file_hash = calculate_hash(full_path)
+                
                 files_info.append({
                     'path': full_path,
                     'size': stat.st_size,
-                    'modified': datetime.datetime.fromtimestamp(stat.st_mtime)
+                    'modified': datetime.datetime.fromtimestamp(stat.st_mtime),
+                    'hash': file_hash
                 })
             except (OSError, PermissionError):
                 continue
     
     return files_info
+
+def find_duplicates(files_info):
+    # Находит дубликаты по хэшу. Возвращает словарь: хэш - список путей
+    hash_groups = {}
+    
+    for file_info in files_info:
+        file_hash = file_info.get('hash')
+        if file_hash is None:
+            continue
+        
+        if file_hash not in hash_groups:
+            hash_groups[file_hash] = []
+        hash_groups[file_hash].append(file_info['path'])
+    
+    # Оставляем только группы с дубликатами
+    duplicates = {h: paths for h, paths in hash_groups.items() if len(paths) > 1}
+    
+    return duplicates
 
 def main():
     if len(sys.argv) < 2:
@@ -88,7 +124,25 @@ def main():
             print(f"   Изменён: {file_info['modified']}")
             print()
         print(f"... и ещё {len(files) - 10} файлов")
+ 
+    print()
+    print("ПОИСК ДУБЛИКАТОВ:")
+    print()
     
+    duplicates = find_duplicates(files)
+    
+    if duplicates:
+        print(f"Найдено групп дубликатов: {len(duplicates)}")
+        print()
+        for hash_val, paths in duplicates.items():
+            print(f"Группа дубликатов (хэш: {hash_val[:16]}...):")
+            for i, path in enumerate(paths, 1):
+                print(f"  {i}. {path}")
+            print()
+    else:
+        print("Дубликатов не найдено.")
+        print()
+
     print("Сканирование завершено!")
 
 if __name__ == "__main__":
