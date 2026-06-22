@@ -1,1 +1,29 @@
+"""
+Сканирование папок, поиск дубликатов и сравнение с резервной копией.
+"""
 
+import sys
+import os
+
+def main():
+
+    if len(sys.argv) < 2:
+        print("Ошибка: укажите путь к папке")
+        print("Пример: python main.py C:/МоиДокументы")
+        sys.exit(1)
+    
+    folder_path = sys.argv[1]
+    
+    if not os.path.exists(folder_path):
+        print(f"Ошибка: папка '{folder_path}' не существует")
+        sys.exit(1)
+    
+    if not os.path.isdir(folder_path):
+        print(f"Ошибка: '{folder_path}' - это не папка")
+        sys.exit(1)
+    
+    print(f"Начинаем сканирование папки: {folder_path}")
+    print("Программа успешно запущена!")
+
+if __name__ == "__main__":
+    main()
