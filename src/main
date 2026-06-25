@@ -1,7 +1,9 @@
 """
 Сканирование папок, поиск дубликатов и сравнение с резервной копией.
-Сканирование папки и сбор метаданных с фильтрацией.
-Сканирование папок, поиск дубликатов и сравнение с резервной копией.
+1. Каркас (приём пути, проверка существования папки)
+2. Сканирование (ручной рекурсивный обход, сбор метаданных, фильтрация по расширению)
+3. Дубликаты (расчёт хэша MD5, группировка одинаковых файлов)
+4. Резервная копия (отсутствующие, лишние, изменённые файлы)
 """
 
 import sys
@@ -9,8 +11,10 @@ import os
 import datetime
 import hashlib
 
+# 3 -------------------------------------------------------
+
 def calculate_hash(file_path, chunk_size=8192):
-    # Считает хэш файла (MD5). Читает файл порциями по 8 кб, чтобы не загружать память
+    # Считает хэш файла (MD5)
     hash_md5 = hashlib.md5()
     try:
         with open(file_path, "rb") as f:
@@ -21,7 +25,7 @@ def calculate_hash(file_path, chunk_size=8192):
         return None
 
 def scan_folder(folder_path, extension=None):
-    
+    # Рекурсивно сканирует папку и собирает информацию о файлах
     files_info = []
     
     try:
@@ -33,19 +37,15 @@ def scan_folder(folder_path, extension=None):
         full_path = os.path.join(folder_path, item)
         
         if os.path.isdir(full_path):
-            # Рекурсивно обходим папку
             sub_files = scan_folder(full_path, extension)
             files_info.extend(sub_files)
         else:
-            # Фильтрация по расширению
             if extension:
                 if not full_path.lower().endswith(extension.lower()):
                     continue
             
             try:
                 stat = os.stat(full_path)
-                
-                # считаем хэш файла
                 file_hash = calculate_hash(full_path)
                 
                 files_info.append({
@@ -60,7 +60,7 @@ def scan_folder(folder_path, extension=None):
     return files_info
 
 def find_duplicates(files_info):
-    # Находит дубликаты по хэшу. Возвращает словарь: хэш - список путей
+    # Находит дубликаты по хэшу
     hash_groups = {}
     
     for file_info in files_info:
@@ -72,25 +72,109 @@ def find_duplicates(files_info):
             hash_groups[file_hash] = []
         hash_groups[file_hash].append(file_info['path'])
     
-    # Оставляем только группы с дубликатами
     duplicates = {h: paths for h, paths in hash_groups.items() if len(paths) > 1}
-    
     return duplicates
+
+# 4 ----------------------------------------------------------
+
+def compare_with_backup(source_files, backup_files):
+    # Сравнивает исходную папку с бэкапом по имени файла и хэшу
+    # Создаем словари: имя файла - информация
+    source_by_name = {}
+    for info in source_files:
+        name = os.path.basename(info['path'])
+        source_by_name[name] = info
+    
+    backup_by_name = {}
+    for info in backup_files:
+        name = os.path.basename(info['path'])
+        backup_by_name[name] = info
+    
+    source_names = set(source_by_name.keys())
+    backup_names = set(backup_by_name.keys())
+    
+    missing = []
+    extra = []
+    modified = []
+    same = []
+    
+    for name in source_names:
+        if name not in backup_names:
+            missing.append(name)
+        else:
+            source_hash = source_by_name[name].get('hash')
+            backup_hash = backup_by_name[name].get('hash')
+            
+            if source_hash and backup_hash and source_hash == backup_hash:
+                same.append(name)
+            else:
+                modified.append(name)
+    
+    for name in backup_names:
+        if name not in source_names:
+            extra.append(name)
+    
+    return {
+        'missing': missing,
+        'extra': extra,
+        'modified': modified,
+        'same': same
+    }
+
+def print_comparison_report(comparison_result):
+    print()
+    print("-" * 60)
+    print("СРАВНЕНИЕ С РЕЗЕРВНОЙ КОПИЕЙ:")
+    
+    if comparison_result['missing']:
+        print(f"\n Отсутствуют в бэкапе (есть в исходной): {len(comparison_result['missing'])}")
+        for name in comparison_result['missing']:
+            print(f"  - {name}")
+    else:
+        print("\n Все файлы присутствуют в бэкапе")
+    
+    if comparison_result['extra']:
+        print(f"\n Лишние в бэкапе (нет в исходной): {len(comparison_result['extra'])}")
+        for name in comparison_result['extra']:
+            print(f"  - {name}")
+    else:
+        print("\n В бэкапе нет лишних файлов")
+    
+    if comparison_result['modified']:
+        print(f"\n Изменённые файлы: {len(comparison_result['modified'])}")
+        for name in comparison_result['modified']:
+            print(f"  - {name}")
+    else:
+        print("\n Все общие файлы совпадают")
+    
+    print(f"\n Совпадают: {len(comparison_result['same'])} файлов")
+    
+    print("-" * 60)
+
+# 1 ------------------------------------------------------------------
 
 def main():
     if len(sys.argv) < 2:
         print("Ошибка: укажите путь к папке")
         print("Пример: python main.py C:\МоиДокументы")
         print("Пример с фильтром: python main.py C:\МоиДокументы .txt")
+        print("Пример с бэкапом: python main.py C:\МоиДокументы C:\Бэкап")
         sys.exit(1)
     
     folder_path = sys.argv[1]
     
+    backup_path = None
     extension = None
+    
     if len(sys.argv) >= 3:
-        extension = sys.argv[2]
-        if not extension.startswith('.'):
-            extension = '.' + extension
+        if sys.argv[2].startswith('.'):
+            extension = sys.argv[2]
+        else:
+            backup_path = sys.argv[2]
+    
+    if len(sys.argv) >= 4:
+        if sys.argv[3].startswith('.'):
+            extension = sys.argv[3]
     
     if not os.path.exists(folder_path):
         print(f"Ошибка: папка '{folder_path}' не существует")
@@ -100,36 +184,64 @@ def main():
         print(f"Ошибка: '{folder_path}' - это не папка")
         sys.exit(1)
     
-    print(f"Начинаем сканирование папки: {folder_path}")
+    if backup_path:
+        if not os.path.exists(backup_path):
+            print(f"Ошибка: папка бэкапа '{backup_path}' не существует")
+            sys.exit(1)
+        if not os.path.isdir(backup_path):
+            print(f"Ошибка: '{backup_path}' - это не папка")
+            sys.exit(1)
+    
     if extension:
+        if not extension.startswith('.'):
+            extension = '.' + extension
         print(f"Фильтр: файлы с расширением {extension}")
     
-    files = scan_folder(folder_path, extension)
-    
-    print(f"Всего найдено файлов: {len(files)}")
+    print(f"\nНачинаем сканирование исходной папки: {folder_path}")
+    if backup_path:
+        print(f"Папка бэкапа: {backup_path}")
     print()
     
-    if len(files) <= 10:
+# 2 --------------------------------------------------------------
+
+    print("Сканирование исходной папки...")
+    source_files = scan_folder(folder_path, extension)
+    print(f"Найдено файлов: {len(source_files)}")
+    
+    if backup_path:
+        print("Сканирование папки бэкапа...")
+        backup_files = scan_folder(backup_path, extension)
+        print(f"Найдено файлов: {len(backup_files)}")
+        
+        comparison_result = compare_with_backup(source_files, backup_files)
+        print_comparison_report(comparison_result)
+    
+    print("МЕТАДАННЫЕ ИСХОДНОЙ ПАПКИ:")
+    
+    if len(source_files) <= 10:
         print("Список всех файлов:")
-        for i, file_info in enumerate(files, 1):
+        for i, file_info in enumerate(source_files, 1):
             print(f"{i}. {file_info['path']}")
             print(f"   Размер: {file_info['size']} байт")
             print(f"   Изменён: {file_info['modified']}")
+            if file_info['hash']:
+                print(f"   Хэш: {file_info['hash'][:16]}...")
             print()
     else:
-        print(f"Первые 10 файлов из {len(files)}:")
-        for i, file_info in enumerate(files[:10], 1):
+        print(f"Первые 10 файлов из {len(source_files)}:")
+        for i, file_info in enumerate(source_files[:10], 1):
             print(f"{i}. {file_info['path']}")
             print(f"   Размер: {file_info['size']} байт")
             print(f"   Изменён: {file_info['modified']}")
+            if file_info['hash']:
+                print(f"   Хэш: {file_info['hash'][:16]}...")
             print()
-        print(f"... и ещё {len(files) - 10} файлов")
- 
-    print()
-    print("ПОИСК ДУБЛИКАТОВ:")
-    print()
+        print(f"... и ещё {len(source_files) - 10} файлов")
     
-    duplicates = find_duplicates(files)
+    print("-" * 50)
+    print("ПОИСК ДУБЛИКАТОВ:")
+    
+    duplicates = find_duplicates(source_files)
     
     if duplicates:
         print(f"Найдено групп дубликатов: {len(duplicates)}")
@@ -141,9 +253,9 @@ def main():
             print()
     else:
         print("Дубликатов не найдено.")
-        print()
-
-    print("Сканирование завершено!")
+    
+    print()
+    print("РАБОТА ЗАВЕРШЕНА!")
 
 if __name__ == "__main__":
     main()
